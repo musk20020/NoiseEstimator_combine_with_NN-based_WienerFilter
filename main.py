@@ -2,7 +2,6 @@ import tensorflow as tf
 import numpy as np
 import pdb
 
-
 from model import REG
 from os.path import join
 from configuration import get_config

@@ -46,7 +46,7 @@ class REG:
 
     def build(self, reuse):
 
-        wandb.init(project="VAD", entity="musktang")
+        # wandb.init(project="VAD", entity="musktang")
         # wandb.config = {
         #     "batch_size" : self.config.batch_size,
         #     "filter_h" : 3,
@@ -56,7 +56,7 @@ class REG:
         #     "l2_output_num": 10,
         #     "l3_output_num": 30,
         # }
-        wandb.config = {
+        config = {
             "batch_size": self.config.batch_size,
             "filter_h": 5,
             "filter_w": 5,
@@ -84,21 +84,21 @@ class REG:
                     tf.float32, shape=[None, self.config.stoi_correlation_time, 1], name='ground_truth')
 
             with tf.variable_scope('featureExtractor', reuse=tf.AUTO_REUSE):
-                layer_1 = tfu._add_conv_layer(self.x_noisy_norm, layer_num='1', filter_h=wandb.config.get("filter_h"),
-                                              filter_w=wandb.config.get("filter_w"), input_c=1,
-                                               output_c=wandb.config.get("l1_output_num"), dilation=[1, 1, 1, 1],
+                layer_1 = tfu._add_conv_layer(self.x_noisy_norm, layer_num='1', filter_h=config["filter_h"],
+                                              filter_w=config["filter_w"], input_c=1,
+                                               output_c=config["l1_output_num"], dilation=[1, 1, 1, 1],
                                               activate=tf.nn.leaky_relu, padding='SAME', trainable=True)  # [N, 126, t-2, 512]
-                layer_2 = tfu._add_conv_layer(layer_1, layer_num='2', filter_h=wandb.config.get("filter_h"),
-                                              filter_w=wandb.config.get("filter_w"), input_c=wandb.config.get("l1_output_num"),
-                                              output_c=wandb.config.get("l2_output_num"), dilation=[1, 1, 1, 1],
+                layer_2 = tfu._add_conv_layer(layer_1, layer_num='2', filter_h=config["filter_h"],
+                                              filter_w=config["filter_w"], input_c=config["l1_output_num"],
+                                              output_c=config["l2_output_num"], dilation=[1, 1, 1, 1],
                                               activate=tf.nn.leaky_relu, padding='SAME', trainable=True)  # [N, 62, t-4, 512]
-                layer_3 = tfu._add_conv_layer(layer_2, layer_num='3', filter_h=wandb.config.get("filter_h"),
-                                              filter_w=1, input_c=wandb.config.get("l2_output_num"),
-                                              output_c=wandb.config.get("l3_output_num"), dilation=[1, 1, 1, 1],
+                layer_3 = tfu._add_conv_layer(layer_2, layer_num='3', filter_h=config["filter_h"],
+                                              filter_w=1, input_c=config["l2_output_num"],
+                                              output_c=config["l3_output_num"], dilation=[1, 1, 1, 1],
                                               activate=tf.nn.leaky_relu, padding='SAME', trainable=True)  # [N, 124, t-4, 128]
                 reshape = tf.reshape(tf.transpose(layer_3, perm=[0, 2, 3, 1]),
-                                     [-1, self.config.stoi_correlation_time, wandb.config.get("l3_output_num") * input_dimension])
-                output = tfu._add_3dfc_layer(reshape, wandb.config.get("l3_output_num") * input_dimension, 1,
+                                     [-1, self.config.stoi_correlation_time, config["l3_output_num"] * input_dimension])
+                output = tfu._add_3dfc_layer(reshape, config["l3_output_num"] * input_dimension, 1,
                                                '4', activate_function=tf.nn.sigmoid, trainable=True, keep_prob=1)
                 # softmax = tf.nn.softmax(layer_4, )
 
