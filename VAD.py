@@ -28,32 +28,21 @@ import wandb
 
 class VAD:
 
-    def __init__(self, log_path, saver_path, date, gpu_num, note, config):
+    def __init__(self, gpu_num, config):
 
         os.environ['CUDA_VISIBLE_DEVICES'] = gpu_num
-        self.log_path = log_path
-        self.saver_path = saver_path
-        self.saver_dir = '{}_{}/{}'.format(self.saver_path, note, date)
         self.eps = np.finfo(np.float32).eps
-        self.saver_name = join(
-            self.saver_dir, 'best_saver_{}'.format(note))
-        self.tb_dir = '{}_{}/{}'.format(self.log_path, note, date)
         self.config = config
-
-        if not os.path.exists(self.saver_dir):
-            os.makedirs(self.saver_dir)
-        if not os.path.exists(self.tb_dir):
-            os.makedirs(self.tb_dir)
 
     def build(self, reuse):
         config = {
             "batch_size": self.config.batch_size,
-            "filter_h": 5,
-            "filter_w": 5,
+            "filter_h": 3,
+            "filter_w": 2,
             "mel_freq_num": self.config.mel_freq_num,
-            "l1_output_num": 40,
-            "l2_output_num": 20,
-            "l3_output_num": 10,
+            "l1_output_num": 20,
+            "l2_output_num": 10,
+            "l3_output_num": 30,
         }
 
         self.name = 'VAD'
@@ -65,7 +54,7 @@ class VAD:
                 vs.reuse_variables()
             with tf.variable_scope('Intputs'):
                 self.input = tf.placeholder(
-                    tf.float32, shape=[None, input_dimension, self.config.stoi_correlation_time, 1], name='x_norm')
+                    tf.float32, shape=[1, input_dimension, None, 1], name='x_norm')
 
             with tf.variable_scope('featureExtractor', reuse=tf.AUTO_REUSE):
                 layer_1 = tfu._add_conv_layer(self.input, layer_num='1', filter_h=config["filter_h"],
@@ -85,7 +74,7 @@ class VAD:
                                               activate=tf.nn.leaky_relu, padding='SAME',
                                               trainable=True)  # [N, 124, t-4, 128]
                 reshape = tf.reshape(tf.transpose(layer_3, perm=[0, 2, 3, 1]),
-                                     [-1, self.config.stoi_correlation_time,
+                                     [1, -1,
                                       config["l3_output_num"] * input_dimension])
                 self.output = tfu._add_3dfc_layer(reshape, config["l3_output_num"] * input_dimension, 1,
                                              '4', activate_function=tf.nn.sigmoid, trainable=True, keep_prob=1)
@@ -93,10 +82,10 @@ class VAD:
 
     def init(self):
         sess = tf.Session()
-        model_path = "/AudioProject/nb_denoise/model/220126/"
+        model_path = "/AudioProject/VAD/model/saver_VAD/220126/"
         ckpt = tf.train.get_checkpoint_state(model_path)
         if ckpt is not None:
-            self.saver_pre.restore(sess, ckpt.model_checkpoint_path)
+            self.saver.restore(sess, ckpt.model_checkpoint_path)
         else:
             print("model not found")
         return sess
