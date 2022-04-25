@@ -28,18 +28,18 @@ import wandb
 
 class VAD:
 
-    def __init__(self, gpu_num, config):
+    def __init__(self, gpu_num):
 
         os.environ['CUDA_VISIBLE_DEVICES'] = gpu_num
         self.eps = np.finfo(np.float32).eps
-        self.config = config
+        # self.config = config
 
     def build(self, reuse):
         config = {
-            "batch_size": self.config.batch_size,
+            "batch_size": 1,
             "filter_h": 3,
             "filter_w": 2,
-            "mel_freq_num": self.config.mel_freq_num,
+            "mel_freq_num": 24,
             "l1_output_num": 20,
             "l2_output_num": 10,
             "l3_output_num": 30,
@@ -78,14 +78,14 @@ class VAD:
                                       config["l3_output_num"] * input_dimension])
                 self.output = tfu._add_3dfc_layer(reshape, config["l3_output_num"] * input_dimension, 1,
                                              '4', activate_function=tf.nn.sigmoid, trainable=True, keep_prob=1)
-            self.saver = tf.train.Saver()
+            var_list = tf.all_variables()
+            self.saver_VAD = tf.train.Saver(var_list=[v for v in var_list if 'VAD' in v.name])
 
-    def init(self):
+    def init(self, model_path="/AudioProject/VAD/model/saver_VAD/220126/"):
         sess = tf.Session()
-        model_path = "/AudioProject/VAD/model/saver_VAD/220126/"
         ckpt = tf.train.get_checkpoint_state(model_path)
         if ckpt is not None:
-            self.saver.restore(sess, ckpt.model_checkpoint_path)
+            self.saver_VAD.restore(sess, ckpt.model_checkpoint_path)
         else:
             print("model not found")
         return sess
