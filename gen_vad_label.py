@@ -14,8 +14,8 @@ vad = VAD(gpu_num="0", config=config)
 vad.build(reuse=False)
 sess = vad.init()
 
-path = "/AudioProject/dataset/TCC300_rename/Train/*/*"
-vad_label_path = "/AudioProject/dataset/TCC300_rename/Train_vad_label/"
+path = "/AudioProject/dataset/TCC300_rename/Dev/*/*"
+vad_label_path = "/AudioProject/dataset/TCC300_rename/Dev_vad_label/"
 if not os.path.exists(vad_label_path):
     os.makedirs(vad_label_path)
 

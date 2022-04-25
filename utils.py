@@ -246,13 +246,12 @@ def audio2spec(y, forward_backward=None, SEQUENCE=None, norm=True, hop_length=25
                 mean = 0.001*Sxx[:,i]+0.999*mean
                 var = np.sqrt(0.001*((Sxx[:,i]-mean)**2)+0.999*(var**2))
                 Sxx[:,i] = (Sxx[:,i]-mean)/var
-            return Sxx
+            return Sxx.T
 
     else:
-        Sxx_r = np.array(Sxx)
-    Sxx_r = np.array(Sxx_r).T
-    #Sxx_r = Sxx_r[NUM_FRAME+1:-NUM_FRAME]
-    shape = Sxx_r.shape
+        Sxx = np.array(Sxx)
+    # Sxx_r = np.array(Sxx_r)
+    shape = Sxx.shape
 
     if threshold:
         threshold = np.max(Sxx_r)/200
@@ -260,9 +259,9 @@ def audio2spec(y, forward_backward=None, SEQUENCE=None, norm=True, hop_length=25
         Sxx_r *= Sxx_r*mask
 
     if SEQUENCE:
-        return Sxx_r.reshape(shape[0], 1, shape[1])
+        return Sxx.reshape(shape[0], 1, shape[1])
     else:
-        return Sxx_r
+        return Sxx.T
 
 def phasespec(y, forward_backward=None, SEQUENCE=None, norm=True, hop_length=256, frame_num=None, mel_freq=False, angle=False):
     if frame_num is None:
@@ -829,6 +828,25 @@ def _gen_VAD_training_data_runtime(clean_file_list, noise_file_list, config, tra
     ##########################      data return      ##############################
     return noisy_spec_norm, e
 
+def mag_normalize(mag, vad, vad_threshold=0.8, alpha=0.15):
+    time_step = vad.shape[0]
+    feature_size = mag.shape[1]
+    mag = mag[:, :time_step]
+    mean = np.zeros(feature_size)
+    var = np.zeros(feature_size)
+    # print(mag.shape)
+    # print(vad.shape)
+
+    for i in range(time_step):
+        if vad[i]<vad_threshold:
+            mean = alpha * mag[i] + (1-alpha) * mean
+            # var = np.sqrt(alpha * ((mag[i] - mean) ** 2) + (1-alpha) * (var ** 2))
+        # mag[i] = (mag[i] - mean) / (var+np.finfo(np.float32).eps)
+        mag[i] = (mag[i] - mean)
+        # print(mag[i])
+    return mag
+
+
 def _gen_nnFilter_training_data_runtime(clean_file_list, noise_file_list, config, train=True, num=None):
     def wgn(x, maximum=0.1):
         noise = np.random.random_sample(len(x)) - 0.5
@@ -842,11 +860,14 @@ def _gen_nnFilter_training_data_runtime(clean_file_list, noise_file_list, config
     if train:
         SNR_noise = np.random.randint(-5, 5)  # 3~6
         voice_path = config.voice_path
+        vad_label_path = "/AudioProject/dataset/TCC300_rename/Train_vad_label/"
     else:
         SNR_noise = -2
         voice_path = config.dev_voice_path
+        vad_label_path = "/AudioProject/dataset/TCC300_rename/Dev_vad_label/"
 
     y_clean, y_noisy = ap.gen_training_data(clean_file, noise_file, SNR_noise)
+
 
     #### assert audio is all finite everywhere, else change an audio set ####
     clean_is_not_finite = len(np.where(np.isfinite(y_clean)==False)[0])>0
@@ -858,48 +879,38 @@ def _gen_nnFilter_training_data_runtime(clean_file_list, noise_file_list, config
         clean_is_not_finite = len(np.where(np.isfinite(y_clean) == False)[0]) > 0
         noisy_is_not_finite = len(np.where(np.isfinite(y_noisy) == False)[0]) > 0
 
-    ###  energy VAD  ###
-    _, e = ap.cal_frame_loudness(y_clean, config.hop_length * 2, config.hop_length)
+    speaker = clean_file.split("/")[-2]
+    audio = clean_file.split("/")[-1].split(".")[0]
+    vad_label = np.load("{}{}/{}.npy".format(vad_label_path, speaker, audio))
 
     ##########################      data preprocessing      #############################
-    # noisy_spec = audio2spec(y_noisy, forward_backward=False, SEQUENCE=False, norm=False,
-    #                         hop_length=config.hop_length, under4k_dim=config.under4k, mel_freq=True)
-    # clean_spec = audio2spec(y_clean, forward_backward=False, SEQUENCE=False, norm=False,
-    #                         hop_length=config.hop_length, under4k_dim=config.under4k, mel_freq=True)
-    # clean_spec = clean_spec[:len(e)]
-    # noisy_spec = noisy_spec[:len(e)]
+    noisy_spec = audio2spec(y_noisy, forward_backward=False, SEQUENCE=False, norm=False,
+                            hop_length=config.hop_length, under4k_dim=config.under4k, mel_freq=False)
+    # print(vad_label)
+    noisy_spec_norm = mag_normalize(noisy_spec, vad_label, alpha=0.15, vad_threshold=0.8)
 
-    noisy_spec_norm = audio2spec(y_noisy, forward_backward=False, SEQUENCE=False, norm=True,
-                            hop_length=config.hop_length, under4k_dim=config.under4k, mel_freq=True)
 
-    noisy_spec_norm = noisy_spec_norm[500:len(e)] # 500 for streaming normalize, 100 of 500 for VAD energy init
-    e = (e>0)[500:]
-
+    clean_spec = audio2spec(y_clean, forward_backward=False, SEQUENCE=False, norm=False,
+                            hop_length=config.hop_length, under4k_dim=config.under4k, threshold=False)
+    clean_spec = clean_spec[:, :noisy_spec_norm.shape[1]]
 
     ###  stoi shape  ###
     shift = random.randint(0, 10)
     time_step = noisy_spec_norm.shape
-    # clean_dim = clean_spec.shape
     residual = (time_step[0] - shift) % config.stoi_correlation_time
-
-    # noisy_spec = noisy_spec[shift:time_step[0] - residual]
-    # noisy_spec = noisy_spec.reshape([-1, config.stoi_correlation_time, time_step[1]])
-
-    # clean_spec = clean_spec[shift:time_step[0] - residual]
-    # clean_spec = clean_spec.reshape([-1, config.stoi_correlation_time, clean_dim[1]])
 
     noisy_spec_norm = noisy_spec_norm[shift:time_step[0] - residual]
     noisy_spec_norm = noisy_spec_norm.reshape([-1, config.stoi_correlation_time, time_step[1]])
-
-    e = e[shift:time_step[0] - residual]
-    e = e.reshape([-1, config.stoi_correlation_time])
-
-    # clean_spec_norm = clean_spec_norm[shift:time_step[0] - residual]
-    # clean_spec_norm = clean_spec_norm.reshape([-1, config.stoi_correlation_time, clean_dim[1]])
-
     noisy_spec_norm = np.expand_dims(noisy_spec_norm.transpose([0, 2, 1]), axis=3)
-    e = np.expand_dims(e, axis=2)
-    # clean_spec_norm = np.expand_dims(clean_spec_norm.transpose([0, 2, 1]), axis=3)
+
+    noisy_spec = noisy_spec[shift:time_step[0] - residual]
+    noisy_spec = noisy_spec.reshape([-1, config.stoi_correlation_time, time_step[1]])
+
+
+    # print(noisy_spec_norm.shape)
+
+    clean_spec = clean_spec[shift:time_step[0] - residual]
+    clean_spec = clean_spec.reshape([-1, config.stoi_correlation_time, time_step[1]])
 
     ##########################      data return      ##############################
-    return noisy_spec_norm, e
+    return noisy_spec_norm, clean_spec, noisy_spec

@@ -232,7 +232,7 @@ def second_order_filter_freq(y):
     mag *= np.expand_dims(gain, 1)
     filtered_stft = mag * phase
     filter_y = librosa.istft(filtered_stft, 256, 512)
-    # filter_y = librosa.util.fix_length(filter_y, len(y), mode='edge')
+    filter_y = librosa.util.fix_length(filter_y, len(y), mode='edge')
     return filter_y
 
 def cal_frame_loudness(y, window, hop_length):
@@ -625,10 +625,10 @@ def gen_training_data(clean_file, noise_file, SNR=0):
     noise = second_order_filter_freq(noise)
 
     #### speech speed tuning
-    speed_min = 0.9
-    speed_max = 1.3
-    speed = speed_min + (speed_max - speed_min) * np.random.rand()
-    clean = WSOLA(clean, speed)
+    # speed_min = 0.9
+    # speed_max = 1.3
+    # speed = speed_min + (speed_max - speed_min) * np.random.rand()
+    # clean = WSOLA(clean, speed)
 
     #### speech reverb preporcessing (data aug)
     # if np.random.rand() < 0.01:

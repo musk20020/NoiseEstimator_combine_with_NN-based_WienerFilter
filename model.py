@@ -3,7 +3,7 @@ import h5py
 import numpy as np
 import scipy
 from multiprocessing import Pool
-from utils import _gen_VAD_training_data_runtime
+from utils import _gen_nnFilter_training_data_runtime
 from glob import iglob
 from functools import partial
 import csv
@@ -58,17 +58,16 @@ class REG:
         # }
         config = {
             "batch_size": self.config.batch_size,
-            "filter_h": 5,
-            "filter_w": 5,
+            "filter_h": 7,
+            "filter_w": 3,
             "mel_freq_num": self.config.mel_freq_num,
-            "l1_output_num": 40,
-            "l2_output_num": 20,
-            "l3_output_num": 10,
+            "l1_output_num": 2,
+            "l2_output_num": 129,
+            "l3_output_num": 129,
         }
 
-        self.name = 'VAD'
-        input_dimension = 24  # RNN input
-        output_dimension = 1
+        self.name = 'NEWF'
+        input_dimension = 129  # RNN input
 
         with tf.variable_scope(self.name) as vs:
             if reuse:
@@ -76,44 +75,40 @@ class REG:
             with tf.variable_scope('Intputs'):
                 self.x_noisy_norm = tf.placeholder(
                     tf.float32, shape=[None, input_dimension, self.config.stoi_correlation_time, 1], name='x_norm')
+                self.x_noisy = tf.placeholder(
+                    tf.float32, shape=[None, self.config.stoi_correlation_time, input_dimension], name='x')
 
                 self.lr = tf.placeholder(dtype=tf.float32)  # learning rate
                 self.keep_prob = 0.7
             with tf.variable_scope('Outputs'):
                 self.ground_truth = tf.placeholder(
-                    tf.float32, shape=[None, self.config.stoi_correlation_time, 1], name='ground_truth')
+                    tf.float32, shape=[None, self.config.stoi_correlation_time, input_dimension], name='ground_truth')
 
             with tf.variable_scope('featureExtractor', reuse=tf.AUTO_REUSE):
                 layer_1 = tfu._add_conv_layer(self.x_noisy_norm, layer_num='1', filter_h=config["filter_h"],
                                               filter_w=config["filter_w"], input_c=1,
-                                               output_c=config["l1_output_num"], dilation=[1, 1, 1, 1],
-                                              activate=tf.nn.leaky_relu, padding='SAME', trainable=True)  # [N, 126, t-2, 512]
-                layer_2 = tfu._add_conv_layer(layer_1, layer_num='2', filter_h=config["filter_h"],
-                                              filter_w=config["filter_w"], input_c=config["l1_output_num"],
-                                              output_c=config["l2_output_num"], dilation=[1, 1, 1, 1],
-                                              activate=tf.nn.leaky_relu, padding='SAME', trainable=True)  # [N, 62, t-4, 512]
-                layer_3 = tfu._add_conv_layer(layer_2, layer_num='3', filter_h=config["filter_h"],
-                                              filter_w=1, input_c=config["l2_output_num"],
-                                              output_c=config["l3_output_num"], dilation=[1, 1, 1, 1],
-                                              activate=tf.nn.leaky_relu, padding='SAME', trainable=True)  # [N, 124, t-4, 128]
-                reshape = tf.reshape(tf.transpose(layer_3, perm=[0, 2, 3, 1]),
-                                     [-1, self.config.stoi_correlation_time, config["l3_output_num"] * input_dimension])
-                output = tfu._add_3dfc_layer(reshape, config["l3_output_num"] * input_dimension, 1,
-                                               '4', activate_function=tf.nn.sigmoid, trainable=True, keep_prob=1)
-                # softmax = tf.nn.softmax(layer_4, )
+                                              output_c=config["l1_output_num"], dilation=[1, 1, 1, 1],
+                                              activate=tf.nn.leaky_relu, padding='SAME',
+                                              trainable=True)
+                reshape = tf.reshape(tf.transpose(layer_1, perm=[0, 2, 3, 1]),
+                                     [-1, self.config.stoi_correlation_time,
+                                      config["l1_output_num"] * input_dimension])
+                # layer_1 = tfu._add_3dfc_layer(reshape, input_dimension, config["l1_output_num"],
+                #                              '1', activate_function=tf.nn.tanh, trainable=True, keep_prob=1)
+                layer_2 = tfu._add_3dfc_layer(reshape, config["l1_output_num"]*129, config["l2_output_num"],
+                                              '2', activate_function=tf.nn.tanh, trainable=True, keep_prob=1)
+                mask = tfu._add_3dfc_layer(layer_2, config["l2_output_num"], config["l3_output_num"],
+                                              '3', activate_function=tf.nn.sigmoid, trainable=True, keep_prob=1)
+                # reshape_noisy = tf.reshape(tf.transpose(self.x_noisy_norm, perm=[0, 2, 3, 1]),
+                #                      [-1, self.config.stoi_correlation_time,
+                #                       input_dimension])
+                output = mask*self.x_noisy
 
             with tf.name_scope('reg_loss'):
                 self.loss_mse_denoiser = tf.losses.mean_squared_error(output, self.ground_truth)
-                predict_speech = tf.cast(output>0.5, tf.float32)
-                self.speech_hit_rate = tf.div(tf.reduce_sum(tf.multiply(predict_speech,self.ground_truth)),tf.reduce_sum(self.ground_truth))
-                self.noise_hit_rate = tf.div(tf.reduce_sum(tf.multiply(tf.subtract(1.0, predict_speech),tf.subtract(1.0, self.ground_truth)))
-                                             , tf.reduce_sum(tf.subtract(1.0, self.ground_truth)))
+
                 self.total_loss = self.loss_mse_denoiser
                 tf.summary.scalar('Loss mse', self.loss_mse_denoiser)
-                tf.summary.scalar('SHR', self.speech_hit_rate)
-                tf.summary.scalar('NHR', self.noise_hit_rate)
-                # wandb.log({"Loss mse": self.loss_mse_denoiser})
-
 
             with tf.name_scope("exp_learning_rate"):
                 self.global_step = tf.Variable(0, trainable=False)
@@ -126,10 +121,6 @@ class REG:
                                                              global_step=self.global_step)
             var_list = tf.all_variables()
 
-            # self.saver_pre1 = tf.train.Saver(
-            #     var_list=[v for v in var_list if 'modual1' in v.name or 'featureExtractor' in v.name])
-            # self.saver_pre2 = tf.train.Saver(
-            #     var_list=[v for v in var_list if 'modual2' in v.name in v.name])
             self.saver = tf.train.Saver()
 
     def _training_process(self, sess, epoch, data_list, noise_list, snr_list, merge_op, step, writer, learning_rate, train=True):
@@ -151,7 +142,7 @@ class REG:
             audio_batch = next(get_audio_batch)
             noise_batch = next(get_noise_batch)
             pool = Pool(processes=self.config.thread_num)       
-            func = partial( _gen_VAD_training_data_runtime, audio_batch, noise_batch,
+            func = partial( _gen_nnFilter_training_data_runtime, audio_batch, noise_batch,
                             self.config, train)
             training_data = pool.map( func, range( 0, audio_batch_size ) )
             pool.close()
@@ -164,49 +155,50 @@ class REG:
                     noisy_norm_data = np.vstack( data )
                 if dim == 1:
                     ground_truth = np.vstack( data )
-                # if dim == 2:
-                #     noisy_data_norm = np.vstack( data )
+                if dim == 2:
+                    noisy_data = np.vstack( data )
                 # if dim == 3:
                 #     clean_data_norm = np.vstack( data )
                 dim += 1
             del training_data, training_data_trans
 
-            noisy_norm_data, ground_truth = shuffle( noisy_norm_data, ground_truth)
+            noisy_norm_data, ground_truth, noisy_data = shuffle( noisy_norm_data, ground_truth, noisy_data)
             #t0 = time.time()
             data_len = len( noisy_norm_data )
             data_batch = np_REG_batch(
-                noisy_norm_data, ground_truth, self.config.batch_size, data_len)
+                noisy_norm_data, ground_truth, self.config.batch_size, data_len, noisy_data)
             for batch in range( int( data_len / self.config.batch_size ) ):
-                noisy_norm_batch, ground_truth_batch= next(
-                    data_batch ), next( data_batch )
+                noisy_norm_batch, ground_truth_batch, noisy_batch= next(
+                    data_batch ), next( data_batch ), next( data_batch )
         
                 if train:
                     keep_prob = 0.7
                 else:
                     keep_prob = 1
+
                 feed_dict = {
                              self.lr: learning_rate,
                              self.x_noisy_norm: noisy_norm_batch,
                              self.ground_truth: ground_truth_batch,
-                             #self.train : train
+                             self.x_noisy : noisy_batch
                              }
                 if train:
-                    _, loss_reg, summary, SHR, NHR = sess.run(
-                        [self.optimizer_1, self.total_loss, merge_op, self.speech_hit_rate, self.noise_hit_rate
+                    _, loss_reg, summary = sess.run(
+                        [self.optimizer_1, self.total_loss, merge_op,
                          ], feed_dict=feed_dict )
                     
                     step += 1
                     writer.add_summary( summary, step )
-                    wandb.log({"train mse loss": loss_reg})
-                    wandb.log({"train SHR": SHR})
-                    wandb.log({"train NHR": NHR})
+                    # wandb.log({"train mse loss": loss_reg})
+                    # wandb.log({"train SHR": SHR})
+                    # wandb.log({"train NHR": NHR})
                 else:
-                    loss_reg, summary, SHR, NHR = sess.run(
-                        [self.total_loss, merge_op, self.speech_hit_rate, self.noise_hit_rate
+                    loss_reg, summary = sess.run(
+                        [self.total_loss, merge_op
                          ], feed_dict=feed_dict )
-                    wandb.log({"dev mse loss": loss_reg})
-                    wandb.log({"dev SHR": SHR})
-                    wandb.log({"dev NHR": NHR})
+                    # wandb.log({"dev mse loss": loss_reg})
+                    # wandb.log({"dev SHR": SHR})
+                    # wandb.log({"dev NHR": NHR})
                 
                 loss_reg_tmp += loss_reg
                 count += 1
@@ -279,15 +271,10 @@ class REG:
 
             if read_ckpt is not None:
                 model_path = "/AudioProject/nb_denoise/model/" + read_ckpt + "/"
-                # model_path1 = "/AudioProject/nb_denoise/model/saver_module_model_humanNoise/210524-1/"
-                model_path2 = "/AudioProject/nb_denoise/model/saver_moduleModel/220105-regular/"
-                ckpt1 = tf.train.get_checkpoint_state(model_path)
-                ckpt2 = tf.train.get_checkpoint_state(model_path2)
-                if ckpt1 is not None:
-                    print("Model path : " + ckpt1.model_checkpoint_path)
-                    # print("Model path : " + ckpt2.model_checkpoint_path)
-                    self.saver_pre1.restore(sess, ckpt1.model_checkpoint_path)
-                    self.saver_pre2.restore(sess, ckpt2.model_checkpoint_path)
+                ckpt = tf.train.get_checkpoint_state(model_path)
+                if ckpt is not None:
+                    print("Model path : " + ckpt.model_checkpoint_path)
+                    self.saver_pre.restore(sess, ckpt.model_checkpoint_path)
                 else:
                     print("model not found")
 
